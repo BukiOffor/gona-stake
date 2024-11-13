@@ -174,7 +174,7 @@ impl State {
             stake_entries: state_builder.new_map(),
             decimals,
             token_address,
-            weight: weight,
+            weight,
             paused: false,
             admin,
             smart_wallet
@@ -205,7 +205,8 @@ fn init(ctx: &InitContext, state_builder: &mut StateBuilder) -> InitResult<State
 #[receive(
     contract = "gona_stake",
     name = "stake",
-    parameter = "OnReceivingCis2DataParams<ContractTokenId,ContractTokenAmount,Staker>",
+    parameter = "OnReceivingCis2DataParams<ContractTokenId,ContractTokenAmount,String>",
+    error = "StakingError",
     mutable
 )]
 fn stake_funds(ctx: &ReceiveContext, host: &mut Host<State>) -> Result<(), StakingError> {
