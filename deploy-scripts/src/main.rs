@@ -118,11 +118,7 @@ async fn main() -> Result<(), Error> {
             index: 10300,
             subindex: 0,
         },
-        weight: 85000,
-        smart_wallet: ContractAddress {
-            index: 9833,
-            subindex: 0,
-        },
+        weight: 85000, 
     };
     let param = OwnedParameter::from_serial(&param)?; // Example
 

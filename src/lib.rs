@@ -4,7 +4,6 @@ use concordium_cis2::*;
 use concordium_std::Amount;
 use concordium_std::*;
 use core::fmt::Debug;
-use std::str::FromStr;
 use types::IsMessage;
 pub mod types;
 
@@ -32,7 +31,7 @@ pub struct Chaperone {
 #[derive(Serialize, SchemaType, Clone, Debug)]
 pub enum Staker {
     Account(AccountAddress),
-    Chaperone(PublicKeyEd25519),
+    Chaperone(Chaperone),
 }
 
 /// Struct to represent information about a stake.
@@ -77,7 +76,7 @@ pub struct WithdrawStakeForChaperone {
     pub owner: Staker,
     pub token_id: TokenIdUnit,
     pub expiry_time: Timestamp,
-    pub entry_point: String,
+    pub entry_point: OwnedEntrypointName
 }
 
 impl IsMessage for WithdrawStakeForChaperone {
@@ -145,7 +144,6 @@ pub struct InitParam {
     /// the decimals of the token contract,
     pub decimals: u8,
     pub admin: Address,
-    pub smart_wallet: ContractAddress,
 }
 
 /// Smart contract state
@@ -158,7 +156,6 @@ pub struct State<S = StateApi> {
     pub weight: u32,
     pub paused: bool,
     pub admin: Address,
-    pub smart_wallet: ContractAddress
 }
 
 impl State {
@@ -168,16 +165,14 @@ impl State {
         weight: u32,
         decimals: u8,
         admin: Address,
-        smart_wallet: ContractAddress
     ) -> Self {
         State {
             stake_entries: state_builder.new_map(),
             decimals,
             token_address,
-            weight,
+            weight: weight,
             paused: false,
             admin,
-            smart_wallet
         }
     }
 
@@ -196,7 +191,6 @@ fn init(ctx: &InitContext, state_builder: &mut StateBuilder) -> InitResult<State
         param.weight,
         param.decimals,
         param.admin,
-        param.smart_wallet
     ))
 }
 
@@ -205,32 +199,17 @@ fn init(ctx: &InitContext, state_builder: &mut StateBuilder) -> InitResult<State
 #[receive(
     contract = "gona_stake",
     name = "stake",
-    parameter = "OnReceivingCis2DataParams<ContractTokenId,ContractTokenAmount,String>",
-    error = "StakingError",
+    parameter = "OnReceivingCis2DataParams<ContractTokenId,ContractTokenAmount,Staker>",
     mutable
 )]
 fn stake_funds(ctx: &ReceiveContext, host: &mut Host<State>) -> Result<(), StakingError> {
-    let parameter: OnReceivingCis2DataParams<ContractTokenId, ContractTokenAmount, String> =
+    let parameter: OnReceivingCis2DataParams<ContractTokenId, ContractTokenAmount, Staker> =
         ctx.parameter_cursor().get()?;
     ensure!(!host.state.paused, StakingError::InvalidStakingState);
     let amount = parameter.amount;
     let token_id = parameter.token_id;
     let gona_token = host.state().token_address;
-    
-
-    let staker: Staker;
-
-    //  let data = AccountAddress::(&parameter.data);
-        
-    // if let Ok(data) = concordium_contracts_common::AccountAddress::from_str(&parameter.data){
-    //     staker = Staker::Account(data);
-    // }else 
-    if let Ok(data) = PublicKeyEd25519::from_str(&parameter.data){
-        staker = Staker::Chaperone(data);
-    }else{
-        return Err(StakingError::CouldNotParseAdditionalData)
-    }
-
+    let staker = parameter.data;
 
     // Ensures that only contracts can call this hook function.
     let sender_contract_address = match ctx.sender() {
@@ -304,7 +283,6 @@ fn release_funds(
     let param: WithdrawStake = ctx.parameter_cursor().get()?;
     // let owner = Address::Account(AccountAddress::from_str(ctx.sender()).unwrap());
     let token_address = host.state.token_address;
-    let smart_wallet = host.state.smart_wallet;
     ensure!(!host.state.paused, StakingError::InvalidStakingState);
     match &param.owner {
         Staker::Account(owner) => {
@@ -379,10 +357,10 @@ fn release_funds(
                 owner,
                 token_id,
                 amount,
-                entry_point,
+                entry_point
             } = message.clone();
             ensure!(
-                signer.cmp(&chaperone) == cmp::Ordering::Equal,
+                signer.cmp(&chaperone.key) == cmp::Ordering::Equal,
                 StakingError::WrongSignature.into()
             );
             validate_signature(&message, signer, signature, crypto_primitives, ctx)?;
@@ -411,15 +389,15 @@ fn release_funds(
                 let rewards = rewards * days_of_stake;
                 amount += TokenAmountU64(rewards);
             }
-            let owned_entry = OwnedEntrypointName::new(entry_point)
-                .expect("This is a legit string; this should not have happend");
+            //let owned_entry = OwnedEntrypointName::new("depositCis2Tokens".into())
+            //     .expect("This is a legit string; this should not have happend");
             // Create a Transfer instance
             let transfer_payload = Transfer {
-                token_id,
+                token_id: token_id,
                 amount,
-                to: Receiver::Contract(smart_wallet, owned_entry),
+                to: Receiver::Contract(chaperone.contract_address, entry_point),
                 from: Address::Contract(ctx.self_address()),
-                data: AdditionalData::from(to_bytes(&chaperone)),
+                data: AdditionalData::from(to_bytes(&chaperone.key)),
             };
             let entry_point = EntrypointName::new_unchecked("transfer".into());
 
@@ -499,7 +477,7 @@ fn contract_upgrade(ctx: &ReceiveContext, host: &mut LowLevelHost) -> ReceiveRes
     Ok(())
 }
 
-/// Helper function to calculate the `MessageHash` for a withdrawal.
+/// Helper function to calculate the `RegisterMessageHash` for a registeration.
 #[receive(
     contract = "gona_stake",
     name = "get_param_hash",
