@@ -1,0 +1,32 @@
+name: Build
+on:
+  push:
+
+jobs:
+  build-contract:
+    name: Build Smart Contract
+    runs-on: ubuntu-latest
+
+
+    steps:
+      
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: |
+          sudo apt update
+          rustup install 1.81.0
+          rustup default 1.81.0
+          rustup target add wasm32-unknown-unknown
+          cargo install --locked cargo-concordium
+          cd ${{ github.workspace }}
+          cargo concordium build --out bin/module.wasm.v1
+
+          
+
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: module.wasm.v1
+          path: bin/*
+        #  path: ${{ steps.buildozer.outputs.filename }}
