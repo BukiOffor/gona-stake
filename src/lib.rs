@@ -342,33 +342,33 @@ fn chaperone_stake(
         ContractTokenAmount,
         PublicKeyEd25519,
     > = ctx.parameter_cursor().get()?;
-    // let amount = parameter.amount;
-    // let token_id = parameter.token_id;
-    // let gona_token = host.state().token_address;
+    let amount = parameter.amount;
+    let token_id = parameter.token_id;
+    let gona_token = host.state().token_address;
 
-    // let staker = Staker::Chaperone(parameter.data);
+    let staker = Staker::Chaperone(parameter.data);
 
 
-    // // Ensures that only contracts can call this hook function.
-    // let sender_contract_address = match ctx.sender() {
-    //     Address::Contract(sender_contract_address) => sender_contract_address,
-    //     Address::Account(_) => bail!(StakingError::OnlyContractCanStake.into()),
-    // };
-    // // Cannot stake less than 0.001 of our token
-    // ensure!(
-    //     amount.0.ge(&1000),
-    //     StakingError::CannotStakeLessThanAllowAmount.into()
-    // );
-    // ensure_eq!(
-    //     sender_contract_address,
-    //     gona_token,
-    //     StakingError::SenderContractAddressIsNotAllowedToStake.into()
-    // );
-    // let mut entry = StakeEntry {
-    //     amount,
-    //     time_of_stake: ctx.metadata().block_time(),
-    //     token_id,
-    // };
+    // Ensures that only contracts can call this hook function.
+    let sender_contract_address = match ctx.sender() {
+        Address::Contract(sender_contract_address) => sender_contract_address,
+        Address::Account(_) => bail!(StakingError::OnlyContractCanStake.into()),
+    };
+    // Cannot stake less than 0.001 of our token
+    ensure!(
+        amount.0.ge(&1000),
+        StakingError::CannotStakeLessThanAllowAmount.into()
+    );
+    ensure_eq!(
+        sender_contract_address,
+        gona_token,
+        StakingError::SenderContractAddressIsNotAllowedToStake.into()
+    );
+    let mut entry = StakeEntry {
+        amount,
+        time_of_stake: ctx.metadata().block_time(),
+        token_id,
+    };
     // if let Some(stake_entry) = host.state_mut().stake_entries.remove_and_get(&staker) {
     //     let days_of_stake = ctx
     //         .metadata()
@@ -396,15 +396,15 @@ fn chaperone_stake(
     //         .insert(staker, entry)
     //         .ok_or(StakingError::ContractInvokeError)?;
     // }
-    // logger.log(&Event::StakeCis2Tokens(
-    //     DepositCis2TokensEventOfChaperone {
-    //         token_amount: parameter.amount,
-    //         token_id: parameter.token_id.clone(),
-    //         cis2_token_contract_address: gona_token,
-    //         from: parameter.from,
-    //         to: parameter.data,
-    //     },
-    // ))?;
+    logger.log(&Event::StakeCis2Tokens(
+        DepositCis2TokensEventOfChaperone {
+            token_amount: parameter.amount,
+            token_id: parameter.token_id.clone(),
+            cis2_token_contract_address: gona_token,
+            from: parameter.from,
+            to: parameter.data,
+        },
+    ))?;
     Ok(())
 }
 
