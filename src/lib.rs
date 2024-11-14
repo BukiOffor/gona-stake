@@ -243,7 +243,7 @@ fn deposit_cis2_tokens(
     host: &mut Host<State>,
     logger: &mut Logger,
 ) -> ReceiveResult<()> {
-    let cis2_hook_param: OnReceivingCis2Params< // change to on receiving cis2param
+    let cis2_hook_param: OnReceivingCis2Params< 
         ContractTokenId,
         ContractTokenAmount
     > = ctx.parameter_cursor().get()?;
@@ -323,17 +323,7 @@ fn admin_withdraw_cis2_tokens(
 }
 
 
-/// The function should be called through the receive hook mechanism of a CIS-2
-/// token contract. The function deposits/assigns the sent CIS-2 tokens to a
-/// public key.
-///
-/// The function logs a `DepositCis2Tokens` event.
-///
-/// It rejects if:
-/// - it fails to parse the parameter.
-/// - the sender is not a contract.
-/// - an overflow occurs.
-/// - it fails to log the event.
+
 #[receive(
     contract = "gona_stake",
     name = "chaperone_stake",
@@ -352,69 +342,69 @@ fn chaperone_stake(
         ContractTokenAmount,
         PublicKeyEd25519,
     > = ctx.parameter_cursor().get()?;
-    let amount = parameter.amount;
-    let token_id = parameter.token_id;
-    let gona_token = host.state().token_address;
+    // let amount = parameter.amount;
+    // let token_id = parameter.token_id;
+    // let gona_token = host.state().token_address;
 
-    let staker = Staker::Chaperone(parameter.data);
+    // let staker = Staker::Chaperone(parameter.data);
 
 
-    // Ensures that only contracts can call this hook function.
-    let sender_contract_address = match ctx.sender() {
-        Address::Contract(sender_contract_address) => sender_contract_address,
-        Address::Account(_) => bail!(StakingError::OnlyContractCanStake.into()),
-    };
-    // Cannot stake less than 0.001 of our token
-    ensure!(
-        amount.0.ge(&1000),
-        StakingError::CannotStakeLessThanAllowAmount.into()
-    );
-    ensure_eq!(
-        sender_contract_address,
-        gona_token,
-        StakingError::SenderContractAddressIsNotAllowedToStake.into()
-    );
-    let mut entry = StakeEntry {
-        amount,
-        time_of_stake: ctx.metadata().block_time(),
-        token_id,
-    };
-    if let Some(stake_entry) = host.state_mut().stake_entries.remove_and_get(&staker) {
-        let days_of_stake = ctx
-            .metadata()
-            .block_time()
-            .duration_since(stake_entry.time_of_stake)
-            .ok_or(StakingError::DaysOfStakeCouldNotBeCalculated)?
-            .days();
-        let previous_amount = stake_entry.amount;
-        let rewards = calculate_percent(previous_amount.0, host.state.weight, host.state.decimals);
-        if days_of_stake > 0 {
-            let rewards = rewards * days_of_stake;
-            let new_amount = previous_amount + TokenAmountU64(rewards);
-            entry.amount = new_amount;
-        } else {
-            entry.amount += previous_amount;
-        }
-        host.state_mut()
-            .stake_entries
-            .insert(staker, entry)
-            .ok_or(StakingError::ContractInvokeError)?;
-        stake_entry.delete();
-    } else {
-        host.state_mut()
-            .stake_entries
-            .insert(staker, entry)
-            .ok_or(StakingError::ContractInvokeError)?;
-    }
-    logger.log(&Event::StakeCis2Tokens(
-        DepositCis2TokensEventOfChaperone {
-            token_amount: parameter.amount,
-            token_id: parameter.token_id.clone(),
-            cis2_token_contract_address: gona_token,
-            from: parameter.from,
-            to: parameter.data,
-        },
-    ))?;
+    // // Ensures that only contracts can call this hook function.
+    // let sender_contract_address = match ctx.sender() {
+    //     Address::Contract(sender_contract_address) => sender_contract_address,
+    //     Address::Account(_) => bail!(StakingError::OnlyContractCanStake.into()),
+    // };
+    // // Cannot stake less than 0.001 of our token
+    // ensure!(
+    //     amount.0.ge(&1000),
+    //     StakingError::CannotStakeLessThanAllowAmount.into()
+    // );
+    // ensure_eq!(
+    //     sender_contract_address,
+    //     gona_token,
+    //     StakingError::SenderContractAddressIsNotAllowedToStake.into()
+    // );
+    // let mut entry = StakeEntry {
+    //     amount,
+    //     time_of_stake: ctx.metadata().block_time(),
+    //     token_id,
+    // };
+    // if let Some(stake_entry) = host.state_mut().stake_entries.remove_and_get(&staker) {
+    //     let days_of_stake = ctx
+    //         .metadata()
+    //         .block_time()
+    //         .duration_since(stake_entry.time_of_stake)
+    //         .ok_or(StakingError::DaysOfStakeCouldNotBeCalculated)?
+    //         .days();
+    //     let previous_amount = stake_entry.amount;
+    //     let rewards = calculate_percent(previous_amount.0, host.state.weight, host.state.decimals);
+    //     if days_of_stake > 0 {
+    //         let rewards = rewards * days_of_stake;
+    //         let new_amount = previous_amount + TokenAmountU64(rewards);
+    //         entry.amount = new_amount;
+    //     } else {
+    //         entry.amount += previous_amount;
+    //     }
+    //     host.state_mut()
+    //         .stake_entries
+    //         .insert(staker, entry)
+    //         .ok_or(StakingError::ContractInvokeError)?;
+    //     stake_entry.delete();
+    // } else {
+    //     host.state_mut()
+    //         .stake_entries
+    //         .insert(staker, entry)
+    //         .ok_or(StakingError::ContractInvokeError)?;
+    // }
+    // logger.log(&Event::StakeCis2Tokens(
+    //     DepositCis2TokensEventOfChaperone {
+    //         token_amount: parameter.amount,
+    //         token_id: parameter.token_id.clone(),
+    //         cis2_token_contract_address: gona_token,
+    //         from: parameter.from,
+    //         to: parameter.data,
+    //     },
+    // ))?;
     Ok(())
 }
 

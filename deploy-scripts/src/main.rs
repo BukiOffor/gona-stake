@@ -118,7 +118,7 @@ async fn main() -> Result<(), Error> {
             index: 10300,
             subindex: 0,
         },
-        weight: 85000,
+        weight: 8500,
         smart_wallet: ContractAddress {
             index: 9833,
             subindex: 0,
