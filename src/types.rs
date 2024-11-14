@@ -14,26 +14,21 @@ pub enum Event {
     #[concordium(tag = 246)]
     UnstakeCis2TokensOfChaperone(UnstakeCis2TokensEventOfChaperone),
 
-
     #[concordium(tag = 245)]
     UnstakeCis2Tokens(UnstakeCis2TokensEvent),
 
-      #[concordium(tag = 244)]
+    #[concordium(tag = 244)]
     DepositCis2Tokens(DepositCis2TokensEvent),
-
 
     #[concordium(tag = 243)]
     AdminWithdrawCis2Tokens(AdminWithdrawCis2TokensEvent),
-    
+
     #[concordium(tag = 242)]
     StakeCis2Tokens(DepositCis2TokensEventOfChaperone),
 
     #[concordium(tag = 241)]
     AccountStakeCis2Tokens(DepositCis2TokensAccountEvent),
-
 }
-
-
 
 /// The `DepositCcdEvent` is logged whenever a CCD amount received by
 
@@ -49,7 +44,6 @@ pub struct DepositCis2TokensEvent {
     pub cis2_token_contract_address: ContractAddress,
     /// The address that invoked the deposit entrypoint.
     pub from: Address,
- 
 }
 
 #[derive(Debug, Serialize, SchemaType, PartialEq, Eq)]
@@ -122,8 +116,8 @@ pub struct UnstakeCis2TokensEventOfChaperone {
     pub cis2_token_contract_address: ContractAddress,
     /// The public key that the token amount will be withdrawn from.
     pub smart_wallet: ContractAddress,
-    
-    pub key: PublicKeyEd25519
+
+    pub key: PublicKeyEd25519,
 }
 
 /// The `WithdrawCis2TokensEvent` is logged whenever a token amount held by a
@@ -141,5 +135,3 @@ pub struct AdminWithdrawCis2TokensEvent {
     /// The address that the token amount is withdrawn to.
     pub to: Address,
 }
-
-

@@ -14,7 +14,7 @@ use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 /// smallest possible token ID.
 pub type ContractTokenId = TokenIdUnit;
 pub type ContractTokenAmount = TokenAmountU64;
-
+pub type StakeQuery = Option<StakeEntry>;
 // The testnet genesis hash is:
 // 0x4221332d34e1694168c2a0c0b3fd0f273809612cb13d000d5c2e00e85f50f796
 const TESTNET_GENESIS_HASH: [u8; 32] = [
@@ -107,7 +107,7 @@ pub enum StakingError {
     WrongSignature,
     SignatureVerficationFailed,
     CouldNotParseAdditionalData,
-    Overflow
+    Overflow,
 }
 
 impl<A> From<CallContractError<A>> for StakingError {
@@ -171,8 +171,7 @@ pub struct State<S = StateApi> {
     pub paused: bool,
     pub admin: Address,
     pub smart_wallet: ContractAddress,
-    pub reward_volume: u64
-
+    pub reward_volume: u64,
 }
 
 impl State {
@@ -192,7 +191,7 @@ impl State {
             paused: false,
             admin,
             smart_wallet,
-            reward_volume: 0
+            reward_volume: 0,
         }
     }
 
@@ -243,10 +242,8 @@ fn deposit_cis2_tokens(
     host: &mut Host<State>,
     logger: &mut Logger,
 ) -> ReceiveResult<()> {
-    let cis2_hook_param: OnReceivingCis2Params< 
-        ContractTokenId,
-        ContractTokenAmount
-    > = ctx.parameter_cursor().get()?;
+    let cis2_hook_param: OnReceivingCis2Params<ContractTokenId, ContractTokenAmount> =
+        ctx.parameter_cursor().get()?;
 
     // Ensures that only contracts can call this hook function.
     let sender_contract_address = match ctx.sender() {
@@ -254,9 +251,7 @@ fn deposit_cis2_tokens(
         Address::Account(_) => bail!(StakingError::OnlyContractCanStake.into()),
     };
 
-    host
-        .state_mut()
-        .reward_volume += cis2_hook_param.amount.0;
+    host.state_mut().reward_volume += cis2_hook_param.amount.0;
 
     logger.log(&Event::DepositCis2Tokens(DepositCis2TokensEvent {
         token_amount: cis2_hook_param.amount,
@@ -267,7 +262,6 @@ fn deposit_cis2_tokens(
 
     Ok(())
 }
-
 
 #[receive(
     contract = "gona_stake",
@@ -322,8 +316,6 @@ fn admin_withdraw_cis2_tokens(
     Ok(())
 }
 
-
-
 #[receive(
     contract = "gona_stake",
     name = "chaperone_stake",
@@ -348,22 +340,21 @@ fn chaperone_stake(
 
     let staker = Staker::Chaperone(parameter.data);
 
-
     // Ensures that only contracts can call this hook function.
-    // let sender_contract_address = match ctx.sender() {
-    //     Address::Contract(sender_contract_address) => sender_contract_address,
-    //     Address::Account(_) => bail!(StakingError::OnlyContractCanStake.into()),
-    // };
-    // // Cannot stake less than 0.001 of our token
-    // ensure!(
-    //     amount.0.ge(&1000),
-    //     StakingError::CannotStakeLessThanAllowAmount.into()
-    // );
-    // ensure_eq!(
-    //     sender_contract_address,
-    //     gona_token,
-    //     StakingError::SenderContractAddressIsNotAllowedToStake.into()
-    // );
+    let sender_contract_address = match ctx.sender() {
+        Address::Contract(sender_contract_address) => sender_contract_address,
+        Address::Account(_) => bail!(StakingError::OnlyContractCanStake.into()),
+    };
+    // Cannot stake less than 0.001 of our token
+    ensure!(
+        amount.0.ge(&1000),
+        StakingError::CannotStakeLessThanAllowAmount.into()
+    );
+    ensure_eq!(
+        sender_contract_address,
+        gona_token,
+        StakingError::SenderContractAddressIsNotAllowedToStake.into()
+    );
     let mut entry = StakeEntry {
         amount,
         time_of_stake: ctx.metadata().block_time(),
@@ -375,7 +366,8 @@ fn chaperone_stake(
             .block_time()
             .duration_since(stake_entry.time_of_stake)
             .ok_or(StakingError::DaysOfStakeCouldNotBeCalculated)?
-            .days();
+            .millis();
+        //.days();
         let previous_amount = stake_entry.amount;
         let rewards = calculate_percent(previous_amount.0, host.state.weight, host.state.decimals);
         if days_of_stake > 0 {
@@ -385,26 +377,24 @@ fn chaperone_stake(
         } else {
             entry.amount += previous_amount;
         }
+        stake_entry.delete();
         host.state_mut()
             .stake_entries
-            .insert(staker, entry)
-            .ok_or(StakingError::ContractInvokeError)?;
-        stake_entry.delete();
+            .entry(staker)
+            .or_insert(entry);
     } else {
         host.state_mut()
             .stake_entries
-            .insert(staker, entry)
-            .ok_or(StakingError::ContractInvokeError)?;
+            .entry(staker)
+            .or_insert(entry);
     }
-    logger.log(&Event::StakeCis2Tokens(
-        DepositCis2TokensEventOfChaperone {
-            token_amount: parameter.amount,
-            token_id: parameter.token_id.clone(),
-            cis2_token_contract_address: gona_token,
-            from: parameter.from,
-            to: parameter.data,
-        },
-    ))?;
+    logger.log(&Event::StakeCis2Tokens(DepositCis2TokensEventOfChaperone {
+        token_amount: parameter.amount,
+        token_id: parameter.token_id.clone(),
+        cis2_token_contract_address: gona_token,
+        from: parameter.from,
+        to: parameter.data,
+    }))?;
     Ok(())
 }
 
@@ -418,7 +408,10 @@ fn chaperone_stake(
     enable_logger,
     mutable
 )]
-fn stake_funds(ctx: &ReceiveContext, host: &mut Host<State>, logger: &mut Logger,
+fn account_stake(
+    ctx: &ReceiveContext,
+    host: &mut Host<State>,
+    logger: &mut Logger,
 ) -> ReceiveResult<()> {
     let parameter: OnReceivingCis2Params<ContractTokenId, ContractTokenAmount> =
         ctx.parameter_cursor().get()?;
@@ -426,10 +419,10 @@ fn stake_funds(ctx: &ReceiveContext, host: &mut Host<State>, logger: &mut Logger
     let amount = parameter.amount;
     let token_id = parameter.token_id;
     let gona_token = host.state().token_address;
-    
+
     let account = match parameter.from {
         Address::Account(account) => account,
-        Address::Contract(_) => bail!(StakingError::OnlyContractCanStake.into())
+        Address::Contract(_) => bail!(StakingError::OnlyContractCanStake.into()),
     };
 
     let staker: Staker = Staker::Account(account);
@@ -513,7 +506,7 @@ fn release_funds(
     host: &mut Host<State>,
     logger: &mut Logger,
     crypto_primitives: &impl HasCryptoPrimitives,
-) ->  ReceiveResult<()> {
+) -> ReceiveResult<()> {
     let param: WithdrawStake = ctx.parameter_cursor().get()?;
     // let owner = Address::Account(AccountAddress::from_str(ctx.sender()).unwrap());
     let token_address = host.state.token_address;
@@ -548,8 +541,8 @@ fn release_funds(
             // if days == 0 and you calculate reward. it will change balance to 0
             if days_of_stake > 0 {
                 let rewards = rewards * days_of_stake;
-            let reward_volume = host.state.reward_volume;
-            ensure!(reward_volume >= rewards,StakingError::Overflow.into());
+                let reward_volume = host.state.reward_volume;
+                ensure!(reward_volume >= rewards, StakingError::Overflow.into());
                 host.state.reward_volume -= rewards;
                 amount += TokenAmountU64(rewards);
             }
@@ -580,14 +573,12 @@ fn release_funds(
                     });
             }
             host.invoke_contract(&token_address, &payload, entry_point, Amount::zero())?;
-            logger.log(&Event::UnstakeCis2Tokens(
-                UnstakeCis2TokensEvent {
-                    token_amount: param.amount,
-                    token_id: param.token_id.clone(),
-                    cis2_token_contract_address: token_address,
-                    to: Address::Account(*owner),
-                },
-            ))?;
+            logger.log(&Event::UnstakeCis2Tokens(UnstakeCis2TokensEvent {
+                token_amount: param.amount,
+                token_id: param.token_id.clone(),
+                cis2_token_contract_address: token_address,
+                to: Address::Account(*owner),
+            }))?;
             Ok(())
         }
         Staker::Chaperone(chaperone) => {
@@ -610,9 +601,15 @@ fn release_funds(
                 StakingError::WrongSignature.into()
             );
             validate_signature(&message, signer, signature, crypto_primitives, ctx)?;
+            let weight = host.state.weight; 
+            let decimals = host.state.decimals;
+                            let reward_volume = host.state.reward_volume;
+
             let stake_entry = host
-                .state()
+                .state_mut()
                 .stake_entries
+                // .entry(owner.clone())
+                // .occupied_or(StakingError::StakingNotFound)?;
                 .get(&owner)
                 .ok_or(StakingError::StakingNotFound)?;
 
@@ -626,17 +623,18 @@ fn release_funds(
                 .block_time()
                 .duration_since(stake_entry.time_of_stake)
                 .ok_or(StakingError::DaysOfStakeCouldNotBeCalculated)?
-                .minutes();  // change this 
+                .millis(); // change this
 
             let mut amount = amount;
-            let rewards = calculate_percent(amount.0, host.state.weight, host.state.decimals);
+            let rewards = calculate_percent(amount.0, weight, decimals);
+            
             // if days == 0 and you calculate reward. it will change balance to 0
             if days_of_stake > 0 {
-                let rewards = rewards * days_of_stake;
-                let reward_volume = host.state.reward_volume;
+                let cumulative_rewards = rewards * days_of_stake;
                 ensure!(reward_volume >= rewards, StakingError::Overflow.into());
-                host.state.reward_volume -= rewards;
-                amount += TokenAmountU64(rewards);
+                host.state_mut().reward_volume -= cumulative_rewards;
+                amount += TokenAmountU64(cumulative_rewards);
+                bail!(StakingError::TransferError.into());
             }
             let owned_entry = OwnedEntrypointName::new(entry_point)
                 .expect("This is a legit string; this should not have happend");
@@ -672,7 +670,7 @@ fn release_funds(
                     token_id: param.token_id.clone(),
                     cis2_token_contract_address: token_address,
                     smart_wallet,
-                    key: chaperone.clone()
+                    key: chaperone.clone(),
                 },
             ))?;
             Ok(())
@@ -687,7 +685,7 @@ fn release_funds(
     parameter = "Staker",
     return_value = "Option<StakeEntry>"
 )]
-fn get_stake_info(ctx: &ReceiveContext, host: &Host<State>) -> ReceiveResult<Option<StakeEntry>> {
+fn get_stake_info(ctx: &ReceiveContext, host: &Host<State>) -> ReceiveResult<StakeQuery> {
     let param: Staker = ctx.parameter_cursor().get()?;
     let stake_entry_ref = host.state().stake_entries.get(&param);
     // Convert the StateRef to Option<StakeEntry>
@@ -704,13 +702,16 @@ fn set_paused(ctx: &ReceiveContext, host: &mut Host<State>) -> ReceiveResult<()>
         StakingError::SenderIsNotAdmin.into()
     );
     host.state_mut().set_paused(true);
-
     Ok(())
 }
 
 /// Function to get stake information by ID
-#[receive(contract = "gona_stake", name = "change_weight",     parameter = "u32",
-mutable)]
+#[receive(
+    contract = "gona_stake",
+    name = "change_weight",
+    parameter = "u32",
+    mutable
+)]
 fn change_weight(ctx: &ReceiveContext, host: &mut Host<State>) -> ReceiveResult<()> {
     let weight: u32 = ctx.parameter_cursor().get()?;
     ensure_eq!(
@@ -721,6 +722,16 @@ fn change_weight(ctx: &ReceiveContext, host: &mut Host<State>) -> ReceiveResult<
     host.state_mut().change_weight(weight);
 
     Ok(())
+}
+
+/// Function to get stake information by ID
+#[receive(
+    contract = "gona_stake",
+    name = "view_reward_volume",
+    return_value = "u64"
+)]
+fn view_reward(_ctx: &ReceiveContext, host: &Host<State>) -> ReceiveResult<u64> {
+    Ok(host.state.reward_volume)
 }
 
 //function to upgrade contract
@@ -753,7 +764,7 @@ fn contract_upgrade(ctx: &ReceiveContext, host: &mut LowLevelHost) -> ReceiveRes
 #[receive(
     contract = "gona_stake",
     name = "get_param_hash",
-    parameter = "WithdrawStake",
+    parameter = "WithdrawStakeForChaperone",
     return_value = "[u8;32]",
     error = "StakingError",
     crypto_primitives,
@@ -817,8 +828,6 @@ fn calculate_message_hash_from_bytes(
         .0)
 }
 
-
-
 /// The function should be called through the receive hook mechanism of a CIS-2
 /// token contract. The function deposits/assigns the sent CIS-2 tokens to a
 /// public key.
@@ -837,14 +846,11 @@ fn calculate_message_hash_from_bytes(
     error = "StakingError",
     mutable
 )]
-fn cis2_tokens(
-    ctx: &ReceiveContext,
-    _host: &mut Host<State>,
-) -> ReceiveResult<()> {
+fn cis2_tokens(ctx: &ReceiveContext, _host: &mut Host<State>) -> ReceiveResult<()> {
     let _cis2_hook_param: OnReceivingCis2DataParams<
         ContractTokenId,
         ContractTokenAmount,
         PublicKeyEd25519,
-    > = ctx.parameter_cursor().get()?;   
+    > = ctx.parameter_cursor().get()?;
     Ok(())
 }
