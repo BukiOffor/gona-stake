@@ -350,52 +350,52 @@ fn chaperone_stake(
 
 
     // Ensures that only contracts can call this hook function.
-    let sender_contract_address = match ctx.sender() {
-        Address::Contract(sender_contract_address) => sender_contract_address,
-        Address::Account(_) => bail!(StakingError::OnlyContractCanStake.into()),
-    };
-    // Cannot stake less than 0.001 of our token
-    ensure!(
-        amount.0.ge(&1000),
-        StakingError::CannotStakeLessThanAllowAmount.into()
-    );
-    ensure_eq!(
-        sender_contract_address,
-        gona_token,
-        StakingError::SenderContractAddressIsNotAllowedToStake.into()
-    );
+    // let sender_contract_address = match ctx.sender() {
+    //     Address::Contract(sender_contract_address) => sender_contract_address,
+    //     Address::Account(_) => bail!(StakingError::OnlyContractCanStake.into()),
+    // };
+    // // Cannot stake less than 0.001 of our token
+    // ensure!(
+    //     amount.0.ge(&1000),
+    //     StakingError::CannotStakeLessThanAllowAmount.into()
+    // );
+    // ensure_eq!(
+    //     sender_contract_address,
+    //     gona_token,
+    //     StakingError::SenderContractAddressIsNotAllowedToStake.into()
+    // );
     let mut entry = StakeEntry {
         amount,
         time_of_stake: ctx.metadata().block_time(),
         token_id,
     };
-    // if let Some(stake_entry) = host.state_mut().stake_entries.remove_and_get(&staker) {
-    //     let days_of_stake = ctx
-    //         .metadata()
-    //         .block_time()
-    //         .duration_since(stake_entry.time_of_stake)
-    //         .ok_or(StakingError::DaysOfStakeCouldNotBeCalculated)?
-    //         .days();
-    //     let previous_amount = stake_entry.amount;
-    //     let rewards = calculate_percent(previous_amount.0, host.state.weight, host.state.decimals);
-    //     if days_of_stake > 0 {
-    //         let rewards = rewards * days_of_stake;
-    //         let new_amount = previous_amount + TokenAmountU64(rewards);
-    //         entry.amount = new_amount;
-    //     } else {
-    //         entry.amount += previous_amount;
-    //     }
-    //     host.state_mut()
-    //         .stake_entries
-    //         .insert(staker, entry)
-    //         .ok_or(StakingError::ContractInvokeError)?;
-    //     stake_entry.delete();
-    // } else {
-    //     host.state_mut()
-    //         .stake_entries
-    //         .insert(staker, entry)
-    //         .ok_or(StakingError::ContractInvokeError)?;
-    // }
+    if let Some(stake_entry) = host.state_mut().stake_entries.remove_and_get(&staker) {
+        let days_of_stake = ctx
+            .metadata()
+            .block_time()
+            .duration_since(stake_entry.time_of_stake)
+            .ok_or(StakingError::DaysOfStakeCouldNotBeCalculated)?
+            .days();
+        let previous_amount = stake_entry.amount;
+        let rewards = calculate_percent(previous_amount.0, host.state.weight, host.state.decimals);
+        if days_of_stake > 0 {
+            let rewards = rewards * days_of_stake;
+            let new_amount = previous_amount + TokenAmountU64(rewards);
+            entry.amount = new_amount;
+        } else {
+            entry.amount += previous_amount;
+        }
+        host.state_mut()
+            .stake_entries
+            .insert(staker, entry)
+            .ok_or(StakingError::ContractInvokeError)?;
+        stake_entry.delete();
+    } else {
+        host.state_mut()
+            .stake_entries
+            .insert(staker, entry)
+            .ok_or(StakingError::ContractInvokeError)?;
+    }
     logger.log(&Event::StakeCis2Tokens(
         DepositCis2TokensEventOfChaperone {
             token_amount: parameter.amount,
