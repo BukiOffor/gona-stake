@@ -231,7 +231,7 @@ fn init(ctx: &InitContext, state_builder: &mut StateBuilder) -> InitResult<State
 /// - an overflow occurs.
 /// - it fails to log the event.
 #[receive(
-    contract = "gonana_smart_wallet",
+    contract = "gona_stake",
     name = "depositCis2Tokens",
     parameter = "OnReceivingCis2Params<ContractTokenId,ContractTokenAmount>",
     error = "StakingError",
