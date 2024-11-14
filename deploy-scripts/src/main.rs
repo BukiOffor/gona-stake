@@ -105,11 +105,11 @@ async fn main() -> Result<(), Error> {
     // Write your own deployment/initialization script below. An example is given
     // here.
 
-
-
     // You can easily import a type from the smart contract like so:
     use gona_stake::InitParam; // Example
-    let signer = <contracts_common::AccountAddress as std::str::FromStr>::from_str("36J5gb5QVYBvbda4cZkagN4LvVCXejyX8ScuEx8xyAQckVjBMA")?;
+    let signer = <contracts_common::AccountAddress as std::str::FromStr>::from_str(
+        "36J5gb5QVYBvbda4cZkagN4LvVCXejyX8ScuEx8xyAQckVjBMA",
+    )?;
 
     let param = InitParam {
         admin: contracts_common::Address::Account(deployer.key.address),

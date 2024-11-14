@@ -4,9 +4,9 @@ use concordium_cis2::*;
 use concordium_std::Amount;
 use concordium_std::*;
 use core::fmt::Debug;
-use std::str::FromStr;
 use types::IsMessage;
 pub mod types;
+use types::*;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
@@ -22,6 +22,7 @@ const TESTNET_GENESIS_HASH: [u8; 32] = [
     0, 13, 92, 46, 0, 232, 95, 80, 247, 150,
 ];
 pub const TOKEN_ID_GONA: ContractTokenId = TokenIdUnit();
+type Cis2TransferParameter = TransferParams<ContractTokenId, ContractTokenAmount>;
 
 #[derive(Serialize, SchemaType, Clone, Debug)]
 pub struct Chaperone {
@@ -51,15 +52,12 @@ pub struct WithdrawStake {
     pub additional_data: Option<Payload>,
 }
 
-
 #[derive(Serialize, Clone, Debug, SchemaType)]
 pub struct WithdrawStakeOfAccount {
     pub amount: TokenAmountU64,
     pub owner: Staker,
     pub token_id: TokenIdUnit,
 }
-
-
 
 #[derive(Serialize, Clone, Debug, SchemaType)]
 pub struct Payload {
@@ -123,6 +121,19 @@ pub struct StakeParams {
     pub amount: ContractTokenAmount,
 }
 
+/// A single withdrawal of CCD or some amount of tokens.
+#[derive(Serialize, Clone, SchemaType)]
+#[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
+pub struct Withdraw {
+    /// The address receiving the CCD or tokens being withdrawn.
+    pub to: Receiver,
+    /// The amount being withdrawn.
+    pub withdraw_amount: ContractTokenAmount,
+    /// Some additional data for the receive hook function.
+    pub data: AdditionalData,
+    pub token_id: ContractTokenId,
+}
+
 #[derive(Serialize, SchemaType)]
 pub struct ReleaseFundsParams {
     pub token_id: ContractTokenId,
@@ -158,7 +169,8 @@ pub struct State<S = StateApi> {
     pub weight: u32,
     pub paused: bool,
     pub admin: Address,
-    pub smart_wallet: ContractAddress
+    pub smart_wallet: ContractAddress,
+
 }
 
 impl State {
@@ -168,7 +180,7 @@ impl State {
         weight: u32,
         decimals: u8,
         admin: Address,
-        smart_wallet: ContractAddress
+        smart_wallet: ContractAddress,
     ) -> Self {
         State {
             stake_entries: state_builder.new_map(),
@@ -177,12 +189,16 @@ impl State {
             weight,
             paused: false,
             admin,
-            smart_wallet
+            smart_wallet,
         }
     }
 
     fn set_paused(&mut self, paused: bool) {
         self.paused = paused;
+    }
+
+    fn change_weight(&mut self, weight: u32) {
+        self.weight = weight;
     }
 }
 
@@ -196,9 +212,65 @@ fn init(ctx: &InitContext, state_builder: &mut StateBuilder) -> InitResult<State
         param.weight,
         param.decimals,
         param.admin,
-        param.smart_wallet
+        param.smart_wallet,
     ))
 }
+
+
+
+#[receive(
+    contract = "gona_stake",
+    name = "admin_withdraw",
+    parameter = "Withdraw",
+    error = "StakingError",
+    enable_logger,
+    mutable
+)]
+fn admin_withdraw_cis2_tokens(
+    ctx: &ReceiveContext,
+    host: &mut Host<State>,
+    logger: &mut Logger,
+) -> ReceiveResult<()> {
+    // Parse the parameter.
+    let param: Withdraw = ctx.parameter_cursor().get()?;
+    let contract_address = host.state.token_address;
+
+    ensure_eq!(
+        ctx.sender(),
+        host.state.admin,
+        StakingError::SenderIsNotAdmin.into()
+    );
+
+    // Create Transfer parameter.
+    let data: Cis2TransferParameter = TransferParams(vec![concordium_cis2::Transfer {
+        token_id: param.token_id.clone(),
+        amount: param.withdraw_amount,
+        from: Address::Contract(ctx.self_address()),
+        to: param.to.clone(),
+        data: param.data.clone(),
+    }]);
+
+    // Invoke the `transfer` function on the CIS-2 token contract.
+    host.invoke_contract(
+        &contract_address,
+        &data,
+        EntrypointName::new_unchecked("transfer"),
+        Amount::zero(),
+    )?;
+
+    logger.log(&Event::AdminWithdrawCis2Tokens(
+        AdminWithdrawCis2TokensEvent {
+            token_amount: param.withdraw_amount,
+            token_id: param.token_id.clone(),
+            cis2_token_contract_address: contract_address,
+            from: Address::Contract(ctx.self_address()),
+            to: param.to.address(),
+        },
+    ))?;
+
+    Ok(())
+}
+
 
 /// The function should be called through the receive hook mechanism of a CIS-2
 /// token contract. The function deposits/assigns the sent CIS-2 tokens to a
@@ -213,29 +285,84 @@ fn init(ctx: &InitContext, state_builder: &mut StateBuilder) -> InitResult<State
 /// - it fails to log the event.
 #[receive(
     contract = "gona_stake",
-    name = "depositCis2Tokens",
+    name = "chaperone_stake",
     parameter = "OnReceivingCis2DataParams<ContractTokenId,ContractTokenAmount,PublicKeyEd25519>",
     error = "StakingError",
     enable_logger,
     mutable
 )]
-fn deposit_cis2_tokens(
+fn chaperone_stake(
     ctx: &ReceiveContext,
     host: &mut Host<State>,
     logger: &mut Logger,
 ) -> ReceiveResult<()> {
-    let cis2_hook_param: OnReceivingCis2DataParams<
+    let parameter: OnReceivingCis2DataParams<
         ContractTokenId,
         ContractTokenAmount,
         PublicKeyEd25519,
     > = ctx.parameter_cursor().get()?;
+    let amount = parameter.amount;
+    let token_id = parameter.token_id;
+    let gona_token = host.state().token_address;
+
+    let staker = Staker::Chaperone(parameter.data);
 
     // Ensures that only contracts can call this hook function.
     let sender_contract_address = match ctx.sender() {
         Address::Contract(sender_contract_address) => sender_contract_address,
-        Address::Account(_) => bail!(StakingError::SenderContractAddressIsNotAllowedToStake.into()),
+        Address::Account(_) => bail!(StakingError::OnlyContractCanStake.into()),
     };
-
+    // Cannot stake less than 0.001 of our token
+    ensure!(
+        amount.0.ge(&1000),
+        StakingError::CannotStakeLessThanAllowAmount.into()
+    );
+    ensure_eq!(
+        sender_contract_address,
+        gona_token,
+        StakingError::SenderContractAddressIsNotAllowedToStake.into()
+    );
+    let mut entry = StakeEntry {
+        amount,
+        time_of_stake: ctx.metadata().block_time(),
+        token_id,
+    };
+    if let Some(stake_entry) = host.state_mut().stake_entries.remove_and_get(&staker) {
+        let days_of_stake = ctx
+            .metadata()
+            .block_time()
+            .duration_since(stake_entry.time_of_stake)
+            .ok_or(StakingError::DaysOfStakeCouldNotBeCalculated)?
+            .days();
+        let previous_amount = stake_entry.amount;
+        let rewards = calculate_percent(previous_amount.0, host.state.weight, host.state.decimals);
+        if days_of_stake > 0 {
+            let rewards = rewards * days_of_stake;
+            let new_amount = previous_amount + TokenAmountU64(rewards);
+            entry.amount = new_amount;
+        } else {
+            entry.amount += previous_amount;
+        }
+        host.state_mut()
+            .stake_entries
+            .insert(staker, entry)
+            .ok_or(StakingError::ContractInvokeError)?;
+        stake_entry.delete();
+    } else {
+        host.state_mut()
+            .stake_entries
+            .insert(staker, entry)
+            .ok_or(StakingError::ContractInvokeError)?;
+    }
+    logger.log(&Event::DepositCis2Tokens(
+        DepositCis2TokensEvent {
+            token_amount: parameter.amount,
+            token_id: parameter.token_id.clone(),
+            cis2_token_contract_address: gona_token,
+            from: Address::Contract(ctx.self_address()),
+            to: parameter.data,
+        },
+    ))?;
     Ok(())
 }
 
@@ -243,34 +370,20 @@ fn deposit_cis2_tokens(
 /// it calculates the profit, adds it to the current stake and resets the time of stake.
 #[receive(
     contract = "gona_stake",
-    name = "stake",
-    parameter = "OnReceivingCis2DataParams<ContractTokenId,ContractTokenAmount,String>",
+    name = "account_stake",
+    parameter = "OnReceivingCis2DataParams<ContractTokenId,ContractTokenAmount,AccountAddress>",
     error = "StakingError",
     mutable
 )]
 fn stake_funds(ctx: &ReceiveContext, host: &mut Host<State>) -> Result<(), StakingError> {
-    let parameter: OnReceivingCis2DataParams<ContractTokenId, ContractTokenAmount, String> =
+    let parameter: OnReceivingCis2DataParams<ContractTokenId, ContractTokenAmount, AccountAddress> =
         ctx.parameter_cursor().get()?;
     ensure!(!host.state.paused, StakingError::InvalidStakingState);
     let amount = parameter.amount;
     let token_id = parameter.token_id;
     let gona_token = host.state().token_address;
-    
 
-    let staker: Staker;
-
-    //  let data = AccountAddress::(&parameter.data);
-        
-    // if let Ok(data) = concordium_contracts_common::AccountAddress::from_str(&parameter.data){
-    //     staker = Staker::Account(data);
-    // }else 
-    if let Ok(data) = PublicKeyEd25519::from_str(&parameter.data){
-        staker = Staker::Chaperone(data);
-    }else{
-        return Err(StakingError::CouldNotParseAdditionalData)
-    }
-
-
+    let staker: Staker = Staker::Account(parameter.data);
     // Ensures that only contracts can call this hook function.
     let sender_contract_address = match ctx.sender() {
         Address::Contract(sender_contract_address) => sender_contract_address,
@@ -367,7 +480,7 @@ fn release_funds(
                 .block_time()
                 .duration_since(stake_entry.time_of_stake)
                 .ok_or(StakingError::DaysOfStakeCouldNotBeCalculated)?
-                .days();
+                .minutes();
 
             let mut amount = param.amount;
             let rewards = calculate_percent(amount.0, host.state.weight, host.state.decimals);
@@ -441,7 +554,7 @@ fn release_funds(
                 .block_time()
                 .duration_since(stake_entry.time_of_stake)
                 .ok_or(StakingError::DaysOfStakeCouldNotBeCalculated)?
-                .days();
+                .minutes();  // change this 
 
             let mut amount = amount;
             let rewards = calculate_percent(amount.0, host.state.weight, host.state.decimals);
@@ -508,6 +621,21 @@ fn set_paused(ctx: &ReceiveContext, host: &mut Host<State>) -> ReceiveResult<()>
         StakingError::SenderIsNotAdmin.into()
     );
     host.state_mut().set_paused(true);
+
+    Ok(())
+}
+
+/// Function to get stake information by ID
+#[receive(contract = "gona_stake", name = "change_weight",     parameter = "u32",
+mutable)]
+fn change_weight(ctx: &ReceiveContext, host: &mut Host<State>) -> ReceiveResult<()> {
+    let weight: u32 = ctx.parameter_cursor().get()?;
+    ensure_eq!(
+        ctx.sender(),
+        host.state.admin,
+        StakingError::SenderIsNotAdmin.into()
+    );
+    host.state_mut().change_weight(weight);
 
     Ok(())
 }
