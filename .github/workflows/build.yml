@@ -23,11 +23,11 @@ jobs:
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
         source $HOME/.cargo/env
         rustc --version
-        cargo --version
         rustup install 1.81.0
         rustup default 1.81.0
         rustup target add wasm32-unknown-unknown
         cargo install --locked cargo-concordium
+        cargo --version
         cd ${{ github.workspace }}
         cargo concordium build -e --out dist/module.wasm.v1
 
