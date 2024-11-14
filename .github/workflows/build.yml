@@ -29,7 +29,6 @@ jobs:
         rustup target add wasm32-unknown-unknown
         cargo install --locked cargo-concordium
         cd ${{ github.workspace }}
-        cd gona-token
         cargo concordium build -e --out dist/module.wasm.v1
 
     - name: Upload artifacts
