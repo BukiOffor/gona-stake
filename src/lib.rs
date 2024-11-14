@@ -233,7 +233,7 @@ fn init(ctx: &InitContext, state_builder: &mut StateBuilder) -> InitResult<State
 #[receive(
     contract = "gonana_smart_wallet",
     name = "depositCis2Tokens",
-    parameter = "OnReceivingCis2DataParams<ContractTokenId,ContractTokenAmount>",
+    parameter = "OnReceivingCis2Params<ContractTokenId,ContractTokenAmount>",
     error = "StakingError",
     enable_logger,
     mutable
