@@ -233,8 +233,8 @@ fn init(ctx: &InitContext, state_builder: &mut StateBuilder) -> InitResult<State
 #[receive(
     contract = "gonana_smart_wallet",
     name = "depositCis2Tokens",
-    parameter = "OnReceivingCis2DataParams<ContractTokenId,ContractTokenAmount,PublicKeyEd25519>",
-    error = "CustomContractError",
+    parameter = "OnReceivingCis2DataParams<ContractTokenId,ContractTokenAmount>",
+    error = "StakingError",
     enable_logger,
     mutable
 )]
@@ -243,10 +243,9 @@ fn deposit_cis2_tokens(
     host: &mut Host<State>,
     logger: &mut Logger,
 ) -> ReceiveResult<()> {
-    let cis2_hook_param: OnReceivingCis2DataParams<
+    let cis2_hook_param: OnReceivingCis2Params< // change to on receiving cis2param
         ContractTokenId,
-        ContractTokenAmount,
-        PublicKeyEd25519,
+        ContractTokenAmount
     > = ctx.parameter_cursor().get()?;
 
     // Ensures that only contracts can call this hook function.
@@ -264,7 +263,6 @@ fn deposit_cis2_tokens(
         token_id: cis2_hook_param.token_id,
         cis2_token_contract_address: sender_contract_address,
         from: cis2_hook_param.from,
-        to: cis2_hook_param.data,
     }))?;
 
     Ok(())
@@ -360,6 +358,7 @@ fn chaperone_stake(
 
     let staker = Staker::Chaperone(parameter.data);
 
+
     // Ensures that only contracts can call this hook function.
     let sender_contract_address = match ctx.sender() {
         Address::Contract(sender_contract_address) => sender_contract_address,
@@ -408,11 +407,11 @@ fn chaperone_stake(
             .ok_or(StakingError::ContractInvokeError)?;
     }
     logger.log(&Event::StakeCis2Tokens(
-        DepositCis2TokensEvent {
+        DepositCis2TokensEventOfChaperone {
             token_amount: parameter.amount,
             token_id: parameter.token_id.clone(),
             cis2_token_contract_address: gona_token,
-            from: Address::Contract(ctx.self_address()),
+            from: parameter.from,
             to: parameter.data,
         },
     ))?;
@@ -429,7 +428,7 @@ fn chaperone_stake(
     enable_logger,
     mutable
 )]
-fn stake_funds(ctx: &ReceiveContext, host: &mut Host<State>,     logger: &mut Logger,
+fn stake_funds(ctx: &ReceiveContext, host: &mut Host<State>, logger: &mut Logger,
 ) -> ReceiveResult<()> {
     let parameter: OnReceivingCis2Params<ContractTokenId, ContractTokenAmount> =
         ctx.parameter_cursor().get()?;
@@ -442,7 +441,7 @@ fn stake_funds(ctx: &ReceiveContext, host: &mut Host<State>,     logger: &mut Lo
         Address::Account(account) => account,
         Address::Contract(_) => bail!(StakingError::OnlyContractCanStake.into())
     };
-    
+
     let staker: Staker = Staker::Account(account);
 
     // Ensures that only contracts can call this hook function.
@@ -826,4 +825,36 @@ fn calculate_message_hash_from_bytes(
     Ok(crypto_primitives
         .hash_sha2_256(&[&msg_prepend[0..48], &message_bytes].concat())
         .0)
+}
+
+
+
+/// The function should be called through the receive hook mechanism of a CIS-2
+/// token contract. The function deposits/assigns the sent CIS-2 tokens to a
+/// public key.
+///
+/// The function logs a `DepositCis2Tokens` event.
+///
+/// It rejects if:
+/// - it fails to parse the parameter.
+/// - the sender is not a contract.
+/// - an overflow occurs.
+/// - it fails to log the event.
+#[receive(
+    contract = "gona_stake",
+    name = "depositTokens",
+    parameter = "OnReceivingCis2DataParams<ContractTokenId,ContractTokenAmount,PublicKeyEd25519>",
+    error = "StakingError",
+    mutable
+)]
+fn cis2_tokens(
+    ctx: &ReceiveContext,
+    _host: &mut Host<State>,
+) -> ReceiveResult<()> {
+    let _cis2_hook_param: OnReceivingCis2DataParams<
+        ContractTokenId,
+        ContractTokenAmount,
+        PublicKeyEd25519,
+    > = ctx.parameter_cursor().get()?;   
+    Ok(())
 }

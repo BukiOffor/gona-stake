@@ -26,7 +26,7 @@ pub enum Event {
     AdminWithdrawCis2Tokens(AdminWithdrawCis2TokensEvent),
     
     #[concordium(tag = 242)]
-    StakeCis2Tokens(DepositCis2TokensEvent),
+    StakeCis2Tokens(DepositCis2TokensEventOfChaperone),
 
     #[concordium(tag = 241)]
     AccountStakeCis2Tokens(DepositCis2TokensAccountEvent),
@@ -49,14 +49,9 @@ pub struct DepositCis2TokensEvent {
     pub cis2_token_contract_address: ContractAddress,
     /// The address that invoked the deposit entrypoint.
     pub from: Address,
-    /// The public key that the CCD amount is assigned to.
-    pub to: PublicKeyEd25519,
+ 
 }
 
-/// The `DepositCcdEvent` is logged whenever a CCD amount received by
-
-/// The `DepositCis2TokensEvent` is logged whenever a token amount received by
-/// the contract is assigned to a public key.
 #[derive(Debug, Serialize, SchemaType, PartialEq, Eq)]
 pub struct DepositCis2TokensAccountEvent {
     /// The token amount assigned to a public key.
@@ -71,6 +66,19 @@ pub struct DepositCis2TokensAccountEvent {
     pub to: AccountAddress,
 }
 
+#[derive(Debug, Serialize, SchemaType, PartialEq, Eq)]
+pub struct DepositCis2TokensEventOfChaperone {
+    /// The token amount assigned to a public key.
+    pub token_amount: ContractTokenAmount,
+    /// The token id of the token deposit.
+    pub token_id: ContractTokenId,
+    /// The token contract address of the token deposit.
+    pub cis2_token_contract_address: ContractAddress,
+    /// The address that invoked the deposit entrypoint.
+    pub from: Address,
+    /// The public key that the CCD amount is assigned to.
+    pub to: PublicKeyEd25519,
+}
 
 /// The `WithdrawCis2TokensEvent` is logged whenever a token amount held by a
 /// public key is withdrawn to an address.
