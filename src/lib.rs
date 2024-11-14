@@ -215,7 +215,7 @@ fn init(ctx: &InitContext, state_builder: &mut StateBuilder) -> InitResult<State
     contract = "gona_stake",
     name = "depositCis2Tokens",
     parameter = "OnReceivingCis2DataParams<ContractTokenId,ContractTokenAmount,PublicKeyEd25519>",
-    error = "CustomContractError",
+    error = "StakingError",
     enable_logger,
     mutable
 )]
