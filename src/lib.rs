@@ -53,13 +53,6 @@ pub struct WithdrawStake {
 }
 
 #[derive(Serialize, Clone, Debug, SchemaType)]
-pub struct WithdrawStakeOfAccount {
-    pub amount: TokenAmountU64,
-    pub owner: Staker,
-    pub token_id: TokenIdUnit,
-}
-
-#[derive(Serialize, Clone, Debug, SchemaType)]
 pub struct Payload {
     /// The signer public key.
     pub signer: PublicKeyEd25519,
@@ -121,7 +114,12 @@ pub struct StakeParams {
     pub staker: Staker,
     pub amount: ContractTokenAmount,
 }
-
+#[derive(Serialize, SchemaType)]
+pub struct RewardResult {
+    pub days: u64,
+    pub rewards: u64,
+    pub amount_staked: u64
+}
 /// A single withdrawal of CCD or some amount of tokens.
 #[derive(Serialize, Clone, SchemaType)]
 #[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
@@ -201,6 +199,10 @@ impl State {
 
     fn change_weight(&mut self, weight: u32) {
         self.weight = weight;
+    }
+    fn deduct_volume(&mut self, amount: u64) {
+        let volume = self.reward_volume.checked_sub(amount).unwrap_or_else(||0);
+        self.reward_volume = volume;
     }
 }
 
@@ -357,17 +359,16 @@ fn chaperone_stake(
     );
     let mut entry = StakeEntry {
         amount,
-        time_of_stake: ctx.metadata().block_time(),
+        time_of_stake: ctx.metadata().slot_time(),
         token_id,
     };
     if let Some(stake_entry) = host.state_mut().stake_entries.remove_and_get(&staker) {
         let days_of_stake = ctx
             .metadata()
-            .block_time()
+            .slot_time()
             .duration_since(stake_entry.time_of_stake)
             .ok_or(StakingError::DaysOfStakeCouldNotBeCalculated)?
-            .millis();
-        //.days();
+            .days();
         let previous_amount = stake_entry.amount;
         let rewards = calculate_percent(previous_amount.0, host.state.weight, host.state.decimals);
         if days_of_stake > 0 {
@@ -444,13 +445,13 @@ fn account_stake(
     );
     let mut entry = StakeEntry {
         amount,
-        time_of_stake: ctx.metadata().block_time(),
+        time_of_stake: ctx.metadata().slot_time(),
         token_id,
     };
     if let Some(stake_entry) = host.state_mut().stake_entries.remove_and_get(&staker) {
         let days_of_stake = ctx
             .metadata()
-            .block_time()
+            .slot_time()
             .duration_since(stake_entry.time_of_stake)
             .ok_or(StakingError::DaysOfStakeCouldNotBeCalculated)?
             .days();
@@ -497,8 +498,8 @@ fn calculate_percent(amount: u64, weight: u32, decimals: u8) -> u64 {
     contract = "gona_stake",
     name = "withdraw_stake",
     parameter = "WithdrawStake",
-    mutable,
     enable_logger,
+    mutable,
     crypto_primitives
 )]
 fn release_funds(
@@ -531,19 +532,19 @@ fn release_funds(
             );
             let days_of_stake = ctx
                 .metadata()
-                .block_time()
+                .slot_time()
                 .duration_since(stake_entry.time_of_stake)
                 .ok_or(StakingError::DaysOfStakeCouldNotBeCalculated)?
-                .minutes();
+                .days();
 
             let mut amount = param.amount;
             let rewards = calculate_percent(amount.0, host.state.weight, host.state.decimals);
+            
             // if days == 0 and you calculate reward. it will change balance to 0
             if days_of_stake > 0 {
                 let rewards = rewards * days_of_stake;
-                let reward_volume = host.state.reward_volume;
-                ensure!(reward_volume >= rewards, StakingError::Overflow.into());
-                host.state.reward_volume -= rewards;
+                ensure!(host.state.reward_volume >= rewards, StakingError::Overflow.into());
+                host.state_mut().deduct_volume(rewards);
                 amount += TokenAmountU64(rewards);
             }
 
@@ -563,9 +564,9 @@ fn release_funds(
             let balance = previous_amount.0 - param.amount.0;
 
             if balance < 1000 {
-                host.state.stake_entries.remove(&param.owner);
+                host.state_mut().stake_entries.remove(&param.owner);
             } else {
-                host.state
+                host.state_mut()
                     .stake_entries
                     .entry(param.owner.clone())
                     .and_modify(|stake| {
@@ -593,7 +594,7 @@ fn release_funds(
                 expiry_time: _,
                 owner,
                 token_id,
-                amount,
+                amount: withdraw_amount,
                 entry_point,
             } = message.clone();
             ensure!(
@@ -601,12 +602,12 @@ fn release_funds(
                 StakingError::WrongSignature.into()
             );
             validate_signature(&message, signer, signature, crypto_primitives, ctx)?;
-            let weight = host.state.weight; 
+            let weight = host.state.weight;
             let decimals = host.state.decimals;
-                            let reward_volume = host.state.reward_volume;
+            let reward_volume = host.state.reward_volume;
 
             let stake_entry = host
-                .state_mut()
+                .state()
                 .stake_entries
                 .get(&owner)
                 .ok_or(StakingError::StakingNotFound)?;
@@ -618,16 +619,16 @@ fn release_funds(
             );
             let days_of_stake = ctx
                 .metadata()
-                .block_time()
+                .slot_time()
                 .duration_since(stake_entry.time_of_stake)
                 .ok_or(StakingError::DaysOfStakeCouldNotBeCalculated)?
-                .millis(); // change this
+                .days(); 
 
-            let mut amount = amount;
-            let rewards = calculate_percent(amount.0, weight, decimals);
-            
+            let mut amount = withdraw_amount;
+
             // if days == 0 and you calculate reward. it will change balance to 0
             if days_of_stake > 0 {
+                let rewards = calculate_percent(amount.0, weight, decimals);
                 let cumulative_rewards = rewards * days_of_stake;
                 ensure!(reward_volume >= rewards, StakingError::Overflow.into());
                 host.state_mut().reward_volume -= cumulative_rewards;
@@ -654,16 +655,23 @@ fn release_funds(
             let balance = previous_amount.0 - param.amount.0;
 
             if balance < 1000 {
-                host.state.stake_entries.remove(&param.owner);
+                host.state_mut().stake_entries.remove(&param.owner);
             } else {
-                host.state
+                host.state_mut()
                     .stake_entries
                     .entry(param.owner.clone())
                     .and_modify(|stake| {
                         stake.amount = TokenAmountU64(balance);
                     });
             }
+
             host.invoke_contract(&token_address, &payload, entry_point, Amount::zero())?;
+            // host.invoke_contract_raw(
+            //     &token_address,
+            //     OwnedParameter::new_unchecked(to_bytes(&payload)).as_parameter(),
+            //     entry_point,
+            //     Amount::zero(),
+            // )?;
             logger.log(&Event::UnstakeCis2TokensOfChaperone(
                 UnstakeCis2TokensEventOfChaperone {
                     token_amount: param.amount,
@@ -705,6 +713,42 @@ fn set_paused(ctx: &ReceiveContext, host: &mut Host<State>) -> ReceiveResult<()>
     Ok(())
 }
 
+//Function to release the staked funds
+#[receive(
+    contract = "gona_stake",
+    name = "withdraw_stake_for_chaperone",
+    parameter = "WithdrawStake",
+    enable_logger,
+    mutable,
+)]
+fn withdraw_stake_for_chaperone(
+    ctx: &ReceiveContext,
+    host: &mut Host<State>,
+    logger: &mut Logger,
+) -> ReceiveResult<()> {
+    let param: WithdrawStake = ctx.parameter_cursor().get()?;
+    host.state_mut().reward_volume += 1000;
+
+    let token_address = host.state().token_address;
+    let smart_wallet = host.state().smart_wallet;
+    let chaperone = match param.owner {
+        Staker::Chaperone(chaperone) => chaperone,
+        _ => bail!(StakingError::ParseParams.into())
+    };
+
+
+    logger.log(&Event::UnstakeCis2TokensOfChaperone(
+        UnstakeCis2TokensEventOfChaperone {
+            token_amount: param.amount,
+            token_id: param.token_id.clone(),
+            cis2_token_contract_address: token_address,
+            smart_wallet,
+            key: chaperone.clone(),
+        },
+    ))?;
+    Ok(())
+}
+
 /// Function to get stake information by ID
 #[receive(
     contract = "gona_stake",
@@ -731,7 +775,7 @@ fn change_weight(ctx: &ReceiveContext, host: &mut Host<State>) -> ReceiveResult<
     return_value = "u64"
 )]
 fn view_reward(_ctx: &ReceiveContext, host: &Host<State>) -> ReceiveResult<u64> {
-    Ok(host.state.reward_volume)
+    Ok(host.state().reward_volume)
 }
 
 //function to upgrade contract
@@ -854,3 +898,29 @@ fn cis2_tokens(ctx: &ReceiveContext, _host: &mut Host<State>) -> ReceiveResult<(
     > = ctx.parameter_cursor().get()?;
     Ok(())
 }
+
+#[receive(
+    contract = "gona_stake",
+    name = "calculate_rewards",
+    parameter = "Staker",
+    error = "StakingError"
+)]
+fn calculate_rewards(ctx: &ReceiveContext, host: &Host<State>) -> ReceiveResult<RewardResult> {
+    let staker: Staker = ctx.parameter_cursor().get()?;
+    if let Some(stake_entry) = host.state.stake_entries.get(&staker) {
+        let days = ctx
+            .metadata()
+            .slot_time()
+            .duration_since(stake_entry.time_of_stake)
+            .ok_or(StakingError::DaysOfStakeCouldNotBeCalculated)?
+            .days();
+        let previous_amount = stake_entry.amount;
+        let rewards = calculate_percent(previous_amount.0, host.state.weight, host.state.decimals);
+        let rewards = rewards * days;
+        Ok(RewardResult { days, rewards, amount_staked: stake_entry.amount.0 })
+    } else {
+        bail!(StakingError::StakingNotFound.into())
+    }
+}
+
+
