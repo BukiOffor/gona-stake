@@ -608,8 +608,6 @@ fn release_funds(
             let stake_entry = host
                 .state_mut()
                 .stake_entries
-                // .entry(owner.clone())
-                // .occupied_or(StakingError::StakingNotFound)?;
                 .get(&owner)
                 .ok_or(StakingError::StakingNotFound)?;
 
@@ -634,8 +632,9 @@ fn release_funds(
                 ensure!(reward_volume >= rewards, StakingError::Overflow.into());
                 host.state_mut().reward_volume -= cumulative_rewards;
                 amount += TokenAmountU64(cumulative_rewards);
-                bail!(StakingError::TransferError.into());
+                //bail!(StakingError::TransferError.into());
             }
+
             let owned_entry = OwnedEntrypointName::new(entry_point)
                 .expect("This is a legit string; this should not have happend");
             // Create a Transfer instance
@@ -651,6 +650,7 @@ fn release_funds(
             let mut transfers = Vec::new();
             transfers.push(transfer_payload);
             let payload = TransferParams::from(transfers);
+            // calculate transfer after withdrawal; if amount is less than 0.001 flush the account
             let balance = previous_amount.0 - param.amount.0;
 
             if balance < 1000 {

@@ -417,12 +417,13 @@ fn test_unstake_cis2_tokens() {
     let stake = get_stake_query(&chain, gona_stake_address, alice_public_key);
     println!("{:?}", stake);
     assert_eq!(stake.is_some(), true, "Stake did not return");
+
     release_stake(
         &chain,
         gona_stake_address,
         alice_public_key,
         signing_key,
-        WITHDRAW_STAKE_AMOUNT,
+        WITHDRAW_STAKE_AMOUNT ,
     );   
 
     
